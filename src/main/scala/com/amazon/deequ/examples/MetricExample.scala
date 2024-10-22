@@ -11,7 +11,8 @@ object MetricExample {
   def main(args: Array[String]): Unit = {
 
     withSpark { session =>
-      val data = itemsAsDataframe(session,
+      val data = itemsAsDataframe(
+        session,
         Item(1, "Thingy A", "10409983787", "high", 0),
         Item(2, "Thingy B", "13409983787", "low", 0),
         Item(3, "欧阳娜娜", null, null, 5),
@@ -40,7 +41,7 @@ object MetricExample {
         //        saveStatesWith = Some(stateStore) // persist the internal state of the computation
       )
 
-      println("Metrics for the first 3 records:\n")
+      println(s"Metrics for the first ${data.count()} records:\n")
       metricsForData.metricMap.foreach {
         case (analyzer, metric)
         => println(s"\t$analyzer: ${metric.value.get}")
