@@ -27,6 +27,7 @@ import scala.util.Success
 
 private[deequ] case class AnalysisRunnerRepositoryOptions(
       metricsRepository: Option[MetricsRepository] = None,
+      // 此处的数据类型存在问题, 应该设置成 Seq[Option[ResultKey]], 因为之前的计算结果可能对应多个ResultKey
       reuseExistingResultsForKey: Option[ResultKey] = None,
       failIfResultsForReusingMissing: Boolean = false,
       saveOrAppendResultsWithKey: Option[ResultKey] = None)
@@ -110,12 +111,15 @@ object AnalysisRunner {
       return AnalyzerContext.empty
     }
 
+    // 更换 Analyzer 对象的变量类型, 并判断是否有重复 Analyzer, 如果存在重复的Analyzer则抛异常
+    // 此代码其实说明变量传入时 Analyzer 类型的声明不合适, 应该设置为 Seq[Analyzer[State[_], Metric[_]]]
     val allAnalyzers = analyzers.map { _.asInstanceOf[Analyzer[State[_], Metric[_]]] }
     val distinctAnalyzers = allAnalyzers.distinct
     require(distinctAnalyzers.size == allAnalyzers.size,
       s"Duplicate analyzers found: ${allAnalyzers.diff(distinctAnalyzers).distinct}")
 
     /* We do not want to recalculate calculated metrics in the MetricsRepository */
+    // 加载之前已经计算过的 Analysis 结果, 即 AnalyzerContext
     val resultsComputedPreviously: AnalyzerContext =
       (metricsRepositoryOptions.metricsRepository,
         metricsRepositoryOptions.reuseExistingResultsForKey)
@@ -125,10 +129,11 @@ object AnalysisRunner {
           case _ => AnalyzerContext.empty
         }
 
+    // 剔除已经运行过的 Analyzer, 获取还未运行的 Analyzer
     val analyzersAlreadyRan = resultsComputedPreviously.metricMap.keys.toSet
-
     val analyzersToRun = allAnalyzers.filterNot(analyzersAlreadyRan.contains)
 
+    // 判断所有 Metric 是否都从之前的 Repository 中获取, 以及是否都获取成功
     /* Throw an error if all needed metrics should have gotten calculated before but did not */
     if (metricsRepositoryOptions.failIfResultsForReusingMissing && analyzersToRun.nonEmpty) {
       throw new ReusingNotPossibleResultsMissingException(
@@ -136,25 +141,29 @@ object AnalysisRunner {
           s"the metrics for these analyzers would be needed: ${analyzersToRun.mkString(", ")}")
     }
 
+    // 校验所有待执行的 Analyzer 的 precondition 函数, 即判断数据集的 schema 是否满足这些前置条件
     /* Find all analyzers which violate their preconditions */
     val passedAnalyzers = analyzersToRun
       .filter { analyzer =>
         Preconditions.findFirstFailing(data.schema, analyzer.preconditions).isEmpty
       }
 
+    // 获取不满足 precondition 的 Analyzer
     val failedAnalyzers = analyzersToRun.diff(passedAnalyzers)
-
+    // 基于 precondition 执行失败的原因, 生成对应的失败 Metric, 并和对应的 Analyzer 组装成 AnalyzerContext
     /* Create the failure metrics from the precondition violations */
     val preconditionFailures = computePreconditionFailureMetrics(failedAnalyzers, data.schema)
 
+    // 将通过 precondition 的 Analyzer 按照是否属于 GroupingAnalyzer 类型, 拆分为两个集合
     /* Identify analyzers which require us to group the data */
     val (groupingAnalyzers, allScanningAnalyzers) =
       passedAnalyzers.partition { _.isInstanceOf[GroupingAnalyzer[State[_], Metric[_]]] }
 
-
+    // 将 scanningAnalyzers 按照是否属于 KLLSketch Analyzer 拆分为两个集合
     val (kllAnalyzers, scanningAnalyzers) =
       allScanningAnalyzers.partition { _.isInstanceOf[KLLSketch] }
 
+    // 执行 kllAnalyzers, 并获取其对应的执行结果 AnalyzerContext
     val kllMetrics =
       if (kllAnalyzers.nonEmpty) {
         KLLRunner.computeKLLSketchesInExtraPass(data, kllAnalyzers, aggregateWith, saveStatesWith)
@@ -162,10 +171,12 @@ object AnalysisRunner {
         AnalyzerContext.empty
       }
 
+    // 执行 scanningAnalyzers, 并获取其对应的执行结果 AnalyzerContext
     /* Run the analyzers which do not require grouping in a single pass over the data */
     val nonGroupedMetrics =
       runScanningAnalyzers(data, scanningAnalyzers, aggregateWith, saveStatesWith)
 
+    // 从计算结果中获取 Size() Analyzer 的计算结果, 即获取数据的行数
     // TODO this can be further improved, we can get the number of rows from other metrics as well
     // TODO we could also insert an extra Size() computation if we have to scan the data anyways
     var numRowsOfData = nonGroupedMetrics.metric(Size()).collect {
@@ -174,6 +185,7 @@ object AnalysisRunner {
 
     var groupedMetrics = AnalyzerContext.empty
 
+    // 将 groupingAnalyzers 按照 group 列和 where 条件进行分组并执行, 返回结果填充到 AnalyzerContext 中
     /* Run grouping analyzers based on the columns which they need to group on */
     groupingAnalyzers
       .map { _.asInstanceOf[GroupingAnalyzer[State[_], Metric[_]]] }
@@ -193,14 +205,16 @@ object AnalysisRunner {
         }
       }
 
+    // 将所有 AnalyzerContext 拼接
     val resultingAnalyzerContext = resultsComputedPreviously ++ preconditionFailures ++
       nonGroupedMetrics ++ groupedMetrics ++ kllMetrics
 
+    // 如果 ResultKey 和 Repository 不为空, 则将本次计算结果写入 Repository 中
     saveOrAppendResultsIfNecessary(
       resultingAnalyzerContext,
       metricsRepositoryOptions.metricsRepository,
       metricsRepositoryOptions.saveOrAppendResultsWithKey)
-
+    // 如果 fileOutputOptions 不为空, 则将本次计算结果写入对应的JSON文件
     saveJsonOutputsToFilesystemIfNecessary(fileOutputOptions, resultingAnalyzerContext)
 
     resultingAnalyzerContext
@@ -306,6 +320,7 @@ object AnalysisRunner {
       saveStatesTo: Option[StatePersister] = None)
     : AnalyzerContext = {
 
+    // 按照是否属于 ScanShareableAnalyzer 类型拆分 Analyzer
     /* Identify shareable analyzers */
     val (shareable, others) = analyzers.partition { _.isInstanceOf[ScanShareableAnalyzer[_, _]] }
 
@@ -316,16 +331,21 @@ object AnalysisRunner {
     val sharedResults = if (shareableAnalyzers.nonEmpty) {
 
       val metricsByAnalyzer = try {
+        // 获取所有的待计算 column 表达式
         val aggregations = shareableAnalyzers.flatMap { _.aggregationFunctions() }
 
+        // 获取每个 analyzer 对应的 columns 表达式的偏移量
         /* Compute offsets so that the analyzers can correctly pick their results from the row */
         val offsets = shareableAnalyzers.scanLeft(0) { case (current, analyzer) =>
           current + analyzer.aggregationFunctions().length
         }
 
+        // 针对整个数据集进行聚合操作, 并计算各个聚合 column 的值
+        // 因为是针对整个数据集进行聚合操作, 因此聚合结果只有一行, 即使用head来获取首个元素即可
         val results = data.agg(aggregations.head, aggregations.tail: _*).collect().head
 
         shareableAnalyzers.zip(offsets).map { case (analyzer, offset) =>
+          // 创建 (Analyzer, Metric) 元组组成的集合
           analyzer ->
             successOrFailureMetricFrom(analyzer, results, offset, aggregateWith, saveStatesTo)
         }
@@ -340,11 +360,13 @@ object AnalysisRunner {
       AnalyzerContext.empty
     }
 
+    // 执行 non-shareable 的 analyzer
     /* Run non-shareable analyzers separately */
     val otherMetrics = others
       .map { analyzer => analyzer -> analyzer.calculate(data, aggregateWith, saveStatesTo) }
       .toMap[Analyzer[_, Metric[_]], Metric[_]]
 
+    // 返回 shareableAnalyzer + other analyzer 对应的 (Analyzer,Metric) 结果
     sharedResults ++ AnalyzerContext(otherMetrics)
   }
 
@@ -359,6 +381,7 @@ object AnalysisRunner {
     : Metric[_] = {
 
     try {
+      // 结合 Repository 中已经计算的 State , 计算最终的 Metric
       analyzer.metricFromAggregationResult(aggregationResult, offset, aggregateWith, saveStatesTo)
     } catch {
       case error: Exception => analyzer.toFailureMetric(error)
