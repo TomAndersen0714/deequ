@@ -96,6 +96,7 @@ abstract class ScanShareableFrequencyBasedAnalyzer(name: String, columnsToGroupO
 
   def aggregationFunctions(numRows: Long): Seq[Column]
 
+  // todo: 此方法的签名, 返回值类型限定过于狭窄, 扩展性太差
   override def computeMetricFrom(state: Option[FrequenciesAndNumRows]): DoubleMetric = {
 
     state match {
@@ -165,5 +166,3 @@ case class FrequenciesAndNumRows(frequencies: DataFrame, numRows: Long)
     coalesce(col(column), lit(0))
   }
 }
-
-

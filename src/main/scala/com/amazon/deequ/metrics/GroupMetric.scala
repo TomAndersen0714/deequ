@@ -30,6 +30,7 @@ case class GroupMetric(
 
   override def flatten(): Seq[DoubleMetric] = {
     value
+      // todo: 修改逻辑, 取消Map, 使用Seq, 针对所有的 Metric 执行 flatten, 并遍历每个 Seq, 新建 Metric, 但需要修改其 name, 加上当前 Group Metric name 作为前缀
       .map {
         metrics: Map[String, Metric[_]] => {
           metrics.values.toSeq.flatMap(
