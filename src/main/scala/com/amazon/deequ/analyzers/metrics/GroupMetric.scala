@@ -11,14 +11,19 @@ case class GroupMetric(
   entity: Entity.Value,
   name: String,
   instance: String,
-  value: Try[Map[Map[String, String], Double]]
-) extends Metric[Map[Map[String, String], Double]] {
+  value: Try[Map[Map[String, _], Map[String, _]]]
+) extends Metric[Map[Map[String, _], Map[String, _]]] {
 
   override def flatten(): Seq[DoubleMetric] = {
     if (value.isSuccess) {
-      value.get.map {
-          case (key, correspondingValue) =>
-            DoubleMetric(entity, s"$name-$key", instance, Success(correspondingValue))
+      value.get.flatMap {
+          case (groupMap, aggMap) => {
+            aggMap.flatMap {
+              case (k, v) => {
+                DoubleMetric(entity, s"$name-$groupMap-$k", instance, Success(v.toString.toDouble)) +: Nil
+              }
+            }
+          }
         }
         .toSeq
     }
