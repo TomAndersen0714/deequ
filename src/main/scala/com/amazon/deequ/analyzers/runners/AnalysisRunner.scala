@@ -267,6 +267,7 @@ object AnalysisRunner {
     AnalyzerContext(failures)
   }
 
+  // todo: 此处名称使用的是 GroupingAnalyzers, 但是内部却直接使用其子类 FrequencyBasedAnalyzer 的方法... 明显依赖有问题
   private[this] def runGroupingAnalyzers(
       data: DataFrame,
       groupingColumns: Seq[String],
@@ -278,9 +279,14 @@ object AnalysisRunner {
       numRowsOfData: Option[Long])
     : (Long, AnalyzerContext) = {
 
+
+    // todo: 多个 Analyze 可能对应同一个 state
     /* Compute the frequencies of the request groups once */
     var frequenciesAndNumRows = FrequencyBasedAnalyzer.computeFrequencies(data, groupingColumns,
       filterCondition)
+
+    /* todo: 增加 GroupingAnalyzers 对应的 Analyzer Runner */
+
 
     /* Pick one analyzer to store the state for */
     val sampleAnalyzer = analyzers.head.asInstanceOf[Analyzer[FrequenciesAndNumRows, Metric[_]]]

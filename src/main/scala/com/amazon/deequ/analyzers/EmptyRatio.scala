@@ -18,6 +18,7 @@ package com.amazon.deequ.analyzers
 
 import com.amazon.deequ.analyzers.Analyzers.{conditionalCount, conditionalSelection, ifNoNullsIn}
 import com.amazon.deequ.analyzers.Preconditions.{hasColumn, isNotNested}
+import com.amazon.deequ.metrics.Entity
 import org.apache.spark.sql.{Column, Row}
 import org.apache.spark.sql.functions.{expr, sum}
 import org.apache.spark.sql.types.{IntegerType, StructType}
@@ -28,7 +29,7 @@ import org.apache.spark.sql.types.{IntegerType, StructType}
 
 /** EmptyRatio is the fraction of null and empty values in a column of a DataFrame. */
 case class EmptyRatio(column: String, where: Option[String] = None) extends
-  StandardScanShareableAnalyzer[NumMatchesAndCount]("EmptyRatio", column) with
+  StandardScanShareableAnalyzer[NumMatchesAndCount]("EmptyRatio", column, Entity.Column) with
   FilterableAnalyzer {
 
   override def fromAggregationResult(result: Row, offset: Int): Option[NumMatchesAndCount] = {

@@ -17,13 +17,14 @@ package com.amazon.deequ.analyzers
 
 import com.amazon.deequ.analyzers.Analyzers._
 import com.amazon.deequ.analyzers.Preconditions.{hasColumn, isNotNested}
+import com.amazon.deequ.metrics.Entity
 import org.apache.spark.sql.functions.{col, expr, sum, when}
 import org.apache.spark.sql.types.{IntegerType, StructType}
 import org.apache.spark.sql.{Column, Row}
 
 /** EmptySize is the number of null and empty values in a DataFrame. */
 case class EmptySize(column: String, where: Option[String] = None)
-  extends StandardScanShareableAnalyzer[NumMatches]("EmptySize", column)
+  extends StandardScanShareableAnalyzer[NumMatches]("EmptySize", column, Entity.Column)
     with FilterableAnalyzer {
 
   override def aggregationFunctions(): Seq[Column] = {
