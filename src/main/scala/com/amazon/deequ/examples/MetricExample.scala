@@ -18,6 +18,7 @@ package com.amazon.deequ.examples
 
 import com.amazon.deequ.analyzers.runners.AnalysisRunner
 import com.amazon.deequ.analyzers._
+import com.amazon.deequ.analyzers.grouping.GroupingEmptySize
 import com.amazon.deequ.examples.ExampleUtils.{itemsAsDataframe, withSpark}
 
 /**
@@ -34,6 +35,7 @@ object MetricExample {
         Item(3, "欧阳娜娜", null, null, 5),
         Item(4, "王志开", null, "null", 10),
         Item(5, "黄志远", "110", "null", 10),
+        Item(6, "黄志远", "110", "null", 10),
       )
 
       val analysis = Analysis()
@@ -48,6 +50,7 @@ object MetricExample {
         .addAnalyzer(PatternNotMatchRatio("productName", Patterns.CHINESE_NAME))
         .addAnalyzer(PatternNotMatchSize("productName", Patterns.CHINESE_NAME))
         .addAnalyzer(PatternMatchSize("description", Patterns.CHINESE_PHONE))
+        .addAnalyzer(GroupingEmptySize("description", Seq("productName")))
 
       //      val stateStore = InMemoryStateProvider()
 

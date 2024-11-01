@@ -282,51 +282,55 @@ object AnalysisRunner {
     : (Long, AnalyzerContext) = {
 
     val (frequencyBasedAnalyzers, nonFrequencyBasedAnalyzers) = analyzers.partition(_.isInstanceOf[FrequencyBasedAnalyzer])
+    // NOTE: 增加 groupingAggAnalyzers 的处理
+    val (groupingAggAnalyzers, others) = nonFrequencyBasedAnalyzers.partition(_.isInstanceOf[GroupingAggAnalyzer])
+
+    var results = AnalyzerContext.empty
 
     // NOTE: 分组和过滤条件相同的 FrequencyBasedAnalyzer 可以共用同一个中间状态的 frequenciesAndNumRows, 后续还可以根据具体的 Analyzer 的实现进一步聚合
     /* Compute the frequencies of the request groups once */
     var frequenciesAndNumRows = FrequencyBasedAnalyzer.computeFrequencies(data, groupingColumns,
       filterCondition)
 
-    // NOTE: 因为当前方法中的 Analyzer 在调用之前就已经按照进行了分类, 相同分类的 Analyzer 共用一个 State, 所以这里直接可以直接抽取一个 Analyzer 和已经存在的 State 进行聚合. 但实际上这里也并存在BUG, 因为随机取 Analyzer 之前可能并未保存
-    /* Pick one analyzer to store the state for */
-    val sampleAnalyzer = frequencyBasedAnalyzers.head.asInstanceOf[Analyzer[FrequenciesAndNumRows, Metric[_]]]
+    if(frequencyBasedAnalyzers.nonEmpty){
+      // NOTE: 因为当前方法中的 Analyzer 在调用之前就已经按照进行了分类, 相同分类的 Analyzer 共用一个 State, 所以这里直接可以直接抽取一个 Analyzer 和已经存在的 State 进行聚合. 但实际上这里也并存在BUG, 因为随机取 Analyzer 之前可能并未保存
+      /* Pick one analyzer to store the state for */
+      val sampleAnalyzer = frequencyBasedAnalyzers.head.asInstanceOf[Analyzer[FrequenciesAndNumRows, Metric[_]]]
 
-    /* Potentially aggregate states */
-    aggregateWith
-      .foreach { _.load[FrequenciesAndNumRows](sampleAnalyzer)
-        .foreach { previousFrequenciesAndNumRows =>
-          frequenciesAndNumRows = frequenciesAndNumRows.sum(previousFrequenciesAndNumRows)
+      /* Potentially aggregate states */
+      aggregateWith
+        .foreach { _.load[FrequenciesAndNumRows](sampleAnalyzer)
+          .foreach { previousFrequenciesAndNumRows =>
+            frequenciesAndNumRows = frequenciesAndNumRows.sum(previousFrequenciesAndNumRows)
+          }
         }
-      }
 
-    // NOTE: 基于现有的 State Analyzer 计算 AnalyzerContext, 并持久化 State
-    // NOTE: 因为可能涉及到直接引用公共 State 的情况, 因此需要传入 storageLevelOfGroupedDataForMultiplePasses
-    val results = runAnalyzersForParticularGrouping(frequenciesAndNumRows, frequencyBasedAnalyzers, saveStatesTo,
-        storageLevelOfGroupedDataForMultiplePasses)
+      // NOTE: 基于现有的 State Analyzer 计算 AnalyzerContext, 并持久化 State
+      // NOTE: 因为可能涉及到直接引用公共 State 的情况, 因此需要传入 storageLevelOfGroupedDataForMultiplePasses
+        results = runAnalyzersForParticularGrouping(frequenciesAndNumRows, frequencyBasedAnalyzers, saveStatesTo,
+          storageLevelOfGroupedDataForMultiplePasses) ++ results
+    }
 
-    // TODO: 增加 groupingAggAnalyzers 的处理
-    val (groupingAggAnalyzers, others) = nonFrequencyBasedAnalyzers.partition(_.isInstanceOf[GroupingAggAnalyzer])
+    if(groupingAggAnalyzers.nonEmpty){
+      // TODO: 计算中间公共状态, 同时load之前保存的中间状态
+      var groupSummableRowsState = GroupingAggAnalyzer.computeStateFrom(
+        data, groupingColumns,
+        groupingAggAnalyzers.flatMap {_.asInstanceOf[GroupingAggAnalyzer].aggregationFunctions()},
+        filterCondition
+      )
 
-    // TODO: 计算中间公共状态, 同时load之前保存的中间状态
-    var groupSummableRowsState = GroupingAggAnalyzer.computeStateFrom(
-      data, groupingColumns,
-      groupingAggAnalyzers.flatMap {_.asInstanceOf[GroupingAggAnalyzer].aggregationFunctions()},
-      filterCondition
-    )
-
-    aggregateWith
-      .foreach { _.load[GroupSummableRowsState](
-          frequencyBasedAnalyzers.head.asInstanceOf[Analyzer[GroupSummableRowsState, Metric[_]]]
-        )
-        .foreach { previousFrequenciesAndNumRows =>
-          groupSummableRowsState = groupSummableRowsState.sum(previousFrequenciesAndNumRows)
+      aggregateWith
+        .foreach { _.load[GroupSummableRowsState](
+            frequencyBasedAnalyzers.head.asInstanceOf[Analyzer[GroupSummableRowsState, Metric[_]]]
+          )
+          .foreach { previousFrequenciesAndNumRows =>
+            groupSummableRowsState = groupSummableRowsState.sum(previousFrequenciesAndNumRows)
+          }
         }
-      }
 
-    // TODO: State 转换为 Metric, 并和 Analyzer 组装成为 AnalyzerContext, 同时和其他的 AnalyzerContext 合并
-    GroupingAggAnalyzer.analyzerContextFromState(groupSummableRowsState, groupingAggAnalyzers.map(_.asInstanceOf[GroupingAggAnalyzer])) ++ results
-
+      // TODO: State 转换为 Metric, 并和 Analyzer 组装成为 AnalyzerContext, 同时和其他的 AnalyzerContext 合并
+      results = GroupingAggAnalyzer.analyzerContextFromState(groupSummableRowsState, groupingAggAnalyzers.map(_.asInstanceOf[GroupingAggAnalyzer])) ++ results
+    }
     // TODO: 处理其他类型的 GroupingAnalyzer, 目前不存在此情况, 后续扩展时再看情况处理
 
     frequenciesAndNumRows.numRows -> results

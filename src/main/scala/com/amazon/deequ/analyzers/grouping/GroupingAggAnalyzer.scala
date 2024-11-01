@@ -1,7 +1,24 @@
+/**
+ * Copyright 2018 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License"). You may not
+ * use this file except in compliance with the License. A copy of the License
+ * is located at
+ *
+ *     http://aws.amazon.com/apache2.0/
+ *
+ * or in the "license" file accompanying this file. This file is distributed on
+ * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+ * express or implied. See the License for the specific language governing
+ * permissions and limitations under the License.
+ *
+ */
+
 package com.amazon.deequ.analyzers.grouping
 
 import com.amazon.deequ.analyzers.Analyzers.{COUNT_COL, emptyStateException, entityFrom}
 import com.amazon.deequ.analyzers.Preconditions.{atLeastOne, hasColumn, isNotNested}
+import com.amazon.deequ.analyzers.grouping.GroupingAggAnalyzer.aggColumnAliasName
 import com.amazon.deequ.analyzers.metrics.GroupMetric
 import com.amazon.deequ.analyzers.runners.{AnalyzerContext, MetricCalculationException}
 import com.amazon.deequ.analyzers.states.GroupSummableRowsState
@@ -59,30 +76,20 @@ abstract class GroupingAggAnalyzer(
 
 
   override def computeMetricFrom(state: Option[GroupSummableRowsState]): GroupMetric = {
+    val aggColumnNames = aggregationFunctions().map(
+      column => aggColumnAliasName(column)
+    )
+
     state match {
       case Some(theState) =>
-        val metricValue = theState.groupedAggRows.select(
-          groupingColumns().map(col) ++ aggregationFunctions(): _*
-        )
+        // TODO: 性能优化, 先取需要的 DataFrame, 不要整个 Collect
 
         // action the dataframe using collect operation
-        val metricSimpleValue = metricValue.collect().map {
+        val metricSimpleValue = theState.groupedAggRows.collect().map {
           row: Row => {
             // get all formatted expressions of column and corresponding values
             val groupMap = row.getValuesMap[String](groupColumns)
-            val aggMap = row.getValuesMap[String](
-              aggregationFunctions().map(
-                column => {
-                  column.expr match {
-                    // if aggregation function column has alias, use alias as key
-                    case alias: Alias =>
-                      alias.name
-                    // else use formatted expression as key
-                    case _ => expr(column.toString()).toString()
-                  }
-                }
-              )
-            )
+            val aggMap = row.getValuesMap[String](aggColumnNames)
             (groupMap, aggMap)
           }
         }.toMap
@@ -126,11 +133,14 @@ object GroupingAggAnalyzer {
                       ): GroupSummableRowsState = {
 
     val groupColumnsExpr = groupColumns.map(col)
+    val aggColumnsExpr = aggregations.map{
+      aggregation => aggregation.alias(aggColumnAliasName(aggregation))
+    }
 
     val groupedAggData = data
       .transform(filterOptional(where))
       .groupBy(groupColumnsExpr: _*)
-      .agg(aggregations.head, aggregations.tail: _*)
+      .agg(aggColumnsExpr.head, aggColumnsExpr.tail: _*)
 
     val groupedAggRows = limit match {
       case Some(limitValue) => groupedAggData.limit(limitValue)
@@ -155,5 +165,12 @@ object GroupingAggAnalyzer {
         analyzer => analyzer -> analyzer.computeMetricFrom(Some(state))
       }.toMap
     )
+  }
+
+  private def aggColumnAliasName(column: Column): String = {
+    column.expr match {
+      case alias: Alias => alias.name
+      case _ => s"_c_${math.abs(column.hashCode()).toString}"
+    }
   }
 }
