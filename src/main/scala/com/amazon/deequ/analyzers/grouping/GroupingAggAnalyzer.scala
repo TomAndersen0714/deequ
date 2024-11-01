@@ -3,9 +3,10 @@ package com.amazon.deequ.analyzers.grouping
 import com.amazon.deequ.analyzers.Analyzers.{COUNT_COL, emptyStateException, entityFrom}
 import com.amazon.deequ.analyzers.Preconditions.{atLeastOne, hasColumn, isNotNested}
 import com.amazon.deequ.analyzers.metrics.GroupMetric
-import com.amazon.deequ.analyzers.runners.MetricCalculationException
+import com.amazon.deequ.analyzers.runners.{AnalyzerContext, MetricCalculationException}
 import com.amazon.deequ.analyzers.states.GroupSummableRowsState
 import com.amazon.deequ.analyzers.{FilterableAnalyzer, GroupingAnalyzer}
+import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.functions.{col, expr}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.{Column, DataFrame, Row}
@@ -21,7 +22,7 @@ abstract class GroupingAggAnalyzer(
                                     name: String,
                                     groupColumns: Seq[String],
                                     where: Option[String] = None,
-                                    limit: Option[Int] = None
+                                    limit: Option[Int] = Some(100)
                                   )
   extends GroupingAnalyzer[GroupSummableRowsState, GroupMetric]
     with FilterableAnalyzer {
@@ -51,11 +52,9 @@ abstract class GroupingAggAnalyzer(
     expr(s"COUNT(1)").alias(s"$COUNT_COL") :: Nil
   }
 
+
   override def computeStateFrom(data: DataFrame): Option[GroupSummableRowsState] = {
-
-    val aggregations = aggregationFunctions()
-
-    GroupingAggAnalyzer.computeStateFrom(data, groupColumns, aggregations, where, limit)
+    Some(GroupingAggAnalyzer.computeStateFrom(data, groupColumns, aggregationFunctions(), where, limit))
   }
 
 
@@ -66,12 +65,24 @@ abstract class GroupingAggAnalyzer(
           groupingColumns().map(col) ++ aggregationFunctions(): _*
         )
 
+        // action the dataframe using collect operation
         val metricSimpleValue = metricValue.collect().map {
           row: Row => {
+            // get all formatted expressions of column and corresponding values
             val groupMap = row.getValuesMap[String](groupColumns)
-            val aggMap = row.getValuesMap[String](aggregationFunctions().map {
-              column => column.toString()
-            })
+            val aggMap = row.getValuesMap[String](
+              aggregationFunctions().map(
+                column => {
+                  column.expr match {
+                    // if aggregation function column has alias, use alias as key
+                    case alias: Alias =>
+                      alias.name
+                    // else use formatted expression as key
+                    case _ => expr(column.toString()).toString()
+                  }
+                }
+              )
+            )
             (groupMap, aggMap)
           }
         }.toMap
@@ -79,7 +90,6 @@ abstract class GroupingAggAnalyzer(
           entityFrom(groupColumns), name, groupColumns.mkString(","),
           Success(metricSimpleValue.asInstanceOf[Map[Map[String, _], Map[String, _]]])
         )
-
       case None =>
         toFailureMetric(MetricCalculationException.wrapIfNecessary(emptyStateException(this)))
     }
@@ -92,16 +102,13 @@ abstract class GroupingAggAnalyzer(
     )
   }
 
-  // todo, 修复输入参数类型并支持调用
-  //  def toSuccessMetric(value: Double): GroupMetric = {
-  //    GroupMetric(
-  //      entityFrom(groupColumns), name, groupColumns.mkString(","),
-  //      Success(value)
-  //    )
-  //  }
+  // todo, toSuccessMetric
 }
 
-case object GroupingAggAnalyzer {
+/**
+ * @see [[com.amazon.deequ.analyzers.FrequencyBasedAnalyzer$]]
+ */
+object GroupingAggAnalyzer {
 
   /** Compute the aggregation functions of groups in the data once, essentially via a query like
    *
@@ -115,8 +122,8 @@ case object GroupingAggAnalyzer {
                         groupColumns: Seq[String],
                         aggregations: Seq[Column],
                         where: Option[String] = None,
-                        limit: Option[Int] = None
-                      ): Option[GroupSummableRowsState] = {
+                        limit: Option[Int] = Some(100)
+                      ): GroupSummableRowsState = {
 
     val groupColumnsExpr = groupColumns.map(col)
 
@@ -130,7 +137,7 @@ case object GroupingAggAnalyzer {
       case _ => groupedAggData
     }
 
-    Some(GroupSummableRowsState(groupedAggRows, groupColumns))
+    GroupSummableRowsState(groupedAggRows, groupColumns)
   }
 
   def filterOptional(where: Option[String])(data: DataFrame): DataFrame = {
@@ -138,5 +145,15 @@ case object GroupingAggAnalyzer {
       case Some(condition) => data.filter(condition)
       case _ => data
     }
+  }
+
+  def analyzerContextFromState(state: GroupSummableRowsState, analyzers: Seq[GroupingAggAnalyzer])
+  : AnalyzerContext = {
+
+    AnalyzerContext(
+      analyzers.map {
+        analyzer => analyzer -> analyzer.computeMetricFrom(Some(state))
+      }.toMap
+    )
   }
 }

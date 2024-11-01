@@ -17,12 +17,15 @@
 package com.amazon.deequ.analyzers.runners
 
 import com.amazon.deequ.analyzers._
+import com.amazon.deequ.analyzers.grouping.GroupingAggAnalyzer
+import com.amazon.deequ.analyzers.states.GroupSummableRowsState
 import com.amazon.deequ.io.DfsUtils
 import com.amazon.deequ.metrics.{DoubleMetric, Metric}
 import com.amazon.deequ.repository.{MetricsRepository, ResultKey}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 import org.apache.spark.storage.StorageLevel
+
 import scala.util.Success
 
 private[deequ] case class AnalysisRunnerRepositoryOptions(
@@ -267,7 +270,6 @@ object AnalysisRunner {
     AnalyzerContext(failures)
   }
 
-  // todo: 此处名称使用的是 GroupingAnalyzers, 但是内部却直接使用其子类 FrequencyBasedAnalyzer 的方法... 明显依赖有问题
   private[this] def runGroupingAnalyzers(
       data: DataFrame,
       groupingColumns: Seq[String],
@@ -279,17 +281,16 @@ object AnalysisRunner {
       numRowsOfData: Option[Long])
     : (Long, AnalyzerContext) = {
 
+    val (frequencyBasedAnalyzers, nonFrequencyBasedAnalyzers) = analyzers.partition(_.isInstanceOf[FrequencyBasedAnalyzer])
 
-    // todo: 多个 Analyze 可能对应同一个 state
+    // NOTE: 分组和过滤条件相同的 FrequencyBasedAnalyzer 可以共用同一个中间状态的 frequenciesAndNumRows, 后续还可以根据具体的 Analyzer 的实现进一步聚合
     /* Compute the frequencies of the request groups once */
     var frequenciesAndNumRows = FrequencyBasedAnalyzer.computeFrequencies(data, groupingColumns,
       filterCondition)
 
-    /* todo: 增加 GroupingAnalyzers 对应的 Analyzer Runner */
-
-
+    // NOTE: 因为当前方法中的 Analyzer 在调用之前就已经按照进行了分类, 相同分类的 Analyzer 共用一个 State, 所以这里直接可以直接抽取一个 Analyzer 和已经存在的 State 进行聚合. 但实际上这里也并存在BUG, 因为随机取 Analyzer 之前可能并未保存
     /* Pick one analyzer to store the state for */
-    val sampleAnalyzer = analyzers.head.asInstanceOf[Analyzer[FrequenciesAndNumRows, Metric[_]]]
+    val sampleAnalyzer = frequencyBasedAnalyzers.head.asInstanceOf[Analyzer[FrequenciesAndNumRows, Metric[_]]]
 
     /* Potentially aggregate states */
     aggregateWith
@@ -299,8 +300,34 @@ object AnalysisRunner {
         }
       }
 
-    val results = runAnalyzersForParticularGrouping(frequenciesAndNumRows, analyzers, saveStatesTo,
+    // NOTE: 基于现有的 State Analyzer 计算 AnalyzerContext, 并持久化 State
+    // NOTE: 因为可能涉及到直接引用公共 State 的情况, 因此需要传入 storageLevelOfGroupedDataForMultiplePasses
+    val results = runAnalyzersForParticularGrouping(frequenciesAndNumRows, frequencyBasedAnalyzers, saveStatesTo,
         storageLevelOfGroupedDataForMultiplePasses)
+
+    // TODO: 增加 groupingAggAnalyzers 的处理
+    val (groupingAggAnalyzers, others) = nonFrequencyBasedAnalyzers.partition(_.isInstanceOf[GroupingAggAnalyzer])
+
+    // TODO: 计算中间公共状态, 同时load之前保存的中间状态
+    var groupSummableRowsState = GroupingAggAnalyzer.computeStateFrom(
+      data, groupingColumns,
+      groupingAggAnalyzers.flatMap {_.asInstanceOf[GroupingAggAnalyzer].aggregationFunctions()},
+      filterCondition
+    )
+
+    aggregateWith
+      .foreach { _.load[GroupSummableRowsState](
+          frequencyBasedAnalyzers.head.asInstanceOf[Analyzer[GroupSummableRowsState, Metric[_]]]
+        )
+        .foreach { previousFrequenciesAndNumRows =>
+          groupSummableRowsState = groupSummableRowsState.sum(previousFrequenciesAndNumRows)
+        }
+      }
+
+    // TODO: State 转换为 Metric, 并和 Analyzer 组装成为 AnalyzerContext, 同时和其他的 AnalyzerContext 合并
+    GroupingAggAnalyzer.analyzerContextFromState(groupSummableRowsState, groupingAggAnalyzers.map(_.asInstanceOf[GroupingAggAnalyzer])) ++ results
+
+    // TODO: 处理其他类型的 GroupingAnalyzer, 目前不存在此情况, 后续扩展时再看情况处理
 
     frequenciesAndNumRows.numRows -> results
   }
@@ -511,6 +538,7 @@ object AnalysisRunner {
 
     /* Potentially cache the grouped data if we need to make several passes,
        controllable via the storage level */
+    // NOTE: 因为非 ScanShareable 的 Analyzer 会在后续的计算中使用到 grouped data, 所以需要缓存, 单次聚合则不用缓存
     if (others.nonEmpty) {
       frequenciesAndNumRows.frequencies.persist(storageLevelOfGroupedDataForMultiplePasses)
     }
@@ -527,6 +555,7 @@ object AnalysisRunner {
         }
 
         /* Execute aggregation on grouped data */
+        // NOTE: 在已经聚合的 State 数据上, 再次聚合, 即 ScanShareable, 且 Metric 只取了聚合结果列, 没有取分组列
         val results = frequenciesAndNumRows.frequencies
           .agg(aggregations.head, aggregations.tail: _*)
           .collect()
@@ -547,6 +576,7 @@ object AnalysisRunner {
     }
 
     /* Execute remaining analyzers on grouped data */
+    // NOTE: 对于不用二次聚合的 Analyzer 直接调用其 computeMetricFrom 方法
     val otherMetrics = try {
       others
         .map { _.asInstanceOf[FrequencyBasedAnalyzer] }

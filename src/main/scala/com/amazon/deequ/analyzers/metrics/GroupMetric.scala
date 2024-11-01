@@ -17,8 +17,8 @@ case class GroupMetric(
   override def flatten(): Seq[DoubleMetric] = {
     if (value.isSuccess) {
       value.get.flatMap {
-          case (groupMap, aggMap) => {
-            aggMap.flatMap {
+          case (groupMap, valueMap) => {
+            valueMap.flatMap {
               case (k, v) => {
                 DoubleMetric(entity, s"$name-$groupMap-$k", instance, Success(v.toString.toDouble)) +: Nil
               }

@@ -1,8 +1,7 @@
 package com.amazon.deequ.analyzers.grouping
 
-import com.amazon.deequ.analyzers.states.GroupSummableRowsState
+import org.apache.spark.sql.Column
 import org.apache.spark.sql.functions.expr
-import org.apache.spark.sql.{Column, DataFrame}
 
 /**
  * @author TomAndersen
@@ -16,7 +15,6 @@ case class GroupingEmptySize(
 ) extends GroupingAggAnalyzer("GroupingEmptySize", groupColumns, where, limit) {
 
   override def aggregationFunctions(): Seq[Column] = {
-    //    (sum(col(COUNT_COL).equalTo(lit(1)).cast(DoubleType)) / numRows) :: Nil
     expr(s"COUNT(IF($column IS NULL OR trim($column) = '', 1, 0))") :: Nil
   }
 }

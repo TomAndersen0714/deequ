@@ -54,11 +54,12 @@ object FrequencyBasedAnalyzer {
   def computeFrequencies(
       data: DataFrame,
       groupingColumns: Seq[String],
-      where: Option[String] = None)
+      where: Option[String] = None,
+      aggFunctions: Seq[Column] = Seq(count(lit(1)).alias(COUNT_COL))
+    )
     : FrequenciesAndNumRows = {
 
     val columnsToGroupBy = groupingColumns.map { name => col(name) }.toArray
-    val projectionColumns = columnsToGroupBy :+ col(COUNT_COL)
 
     val atLeastOneNonNullGroupingColumn = groupingColumns
       .foldLeft(expr(false.toString)) { case (condition, name) =>
@@ -70,8 +71,7 @@ object FrequencyBasedAnalyzer {
       .where(atLeastOneNonNullGroupingColumn)
       .transform(filterOptional(where))
       .groupBy(columnsToGroupBy: _*)
-      .agg(count(lit(1)).alias(COUNT_COL))
-      .select(projectionColumns: _*)
+      .agg(aggFunctions.head, aggFunctions.tail: _*)
 
     val numRows = data
       .select(columnsToGroupBy: _*)
@@ -93,10 +93,10 @@ object FrequencyBasedAnalyzer {
 /** Base class for all analyzers that compute a (shareable) aggregation over the grouped data */
 abstract class ScanShareableFrequencyBasedAnalyzer(name: String, columnsToGroupOn: Seq[String])
   extends FrequencyBasedAnalyzer(columnsToGroupOn) {
-
+  // NOTE: 专门通过一个参数, 以及事先获取 data 总行数 numRows 来提升性能, 并传递给后续的聚合函数, 如百分比计算, 感觉是种无奈之举
   def aggregationFunctions(numRows: Long): Seq[Column]
 
-  // todo: 此方法的签名, 返回值类型限定过于狭窄, 扩展性太差
+  // NOTE: 此方法的签名, 返回值类型限定过于狭窄, 扩展性太差
   override def computeMetricFrom(state: Option[FrequenciesAndNumRows]): DoubleMetric = {
 
     state match {

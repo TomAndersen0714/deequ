@@ -1,14 +1,13 @@
 package com.amazon.deequ.analyzers.states
 
-import com.amazon.deequ.analyzers.Analyzers.COUNT_COL
 import org.apache.spark.sql.DataFrame
 import org.apache.spark.sql.functions.{coalesce, col}
 
 /**
- * 支持分组+可加性聚合指标 State
+ * 支持分组+可加性指标 State
  *
  * @author ericcheng
- * @see
+ * @see [[com.amazon.deequ.analyzers.FrequenciesAndNumRows]]
  */
 case class GroupSummableRowsState(groupedAggRows: DataFrame, groupColumns: Seq[String] = Nil)
   extends RowsState[GroupSummableRowsState](groupedAggRows) {
