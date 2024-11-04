@@ -23,7 +23,7 @@ import org.apache.spark.sql.{DataFrame, SparkSession}
 
 /**
   * The result returned from AnalysisRunner and Analysis
-  *
+  * 用于存放 AnalysisRunner 和 Analysis 的执行结果, 保存 Analyzer 及其对应的 Metric
   * @param metricMap Analyzers and their Metric results
   */
 case class AnalyzerContext(metricMap: Map[Analyzer[_, Metric[_]], Metric[_]]) {

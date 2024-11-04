@@ -124,6 +124,7 @@ trait Analyzer[S <: State[_], +M <: Metric[_]] {
         }
       }
 
+    // 调用对应 Analyzer 的computeMetricFrom方法, 通过 State 计算 Metric 值
     computeMetricFrom(stateToComputeMetricFrom)
   }
 
@@ -168,12 +169,15 @@ trait Analyzer[S <: State[_], +M <: Metric[_]] {
   * can share scans over the data */
 trait ScanShareableAnalyzer[S <: State[_], +M <: Metric[_]] extends Analyzer[S, M] {
 
+  // 定义需要执行的聚合表达式 Column
   /** Defines the aggregations to compute on the data */
   private[deequ] def aggregationFunctions(): Seq[Column]
 
+  // 从 Column 聚合结果行, 以及偏移量, 获取当前 Analyzer 对应的结果, 并基于这些计算结果, 计算对应的 State 值
   /** Computes the state from the result of the aggregation functions */
   private[deequ] def fromAggregationResult(result: Row, offset: Int): Option[S]
 
+  // 基于输入的数据集, 计算聚合结果对应的 State
   /** Runs aggregation functions directly, without scan sharing */
   override def computeStateFrom(data: DataFrame): Option[S] = {
     val aggregations = aggregationFunctions()
@@ -181,6 +185,7 @@ trait ScanShareableAnalyzer[S <: State[_], +M <: Metric[_]] extends Analyzer[S, 
     fromAggregationResult(result, 0)
   }
 
+  // 从聚合结果中, 计算 Metric
   /** Produces a metric from the aggregation result */
   private[deequ] def metricFromAggregationResult(
       result: Row,
