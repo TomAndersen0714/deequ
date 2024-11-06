@@ -37,6 +37,7 @@ import scala.util.{Failure, Success}
  */
 abstract class GroupingAggAnalyzer(
                                     name: String,
+                                    instance: String,
                                     groupColumns: Seq[String],
                                     where: Option[String] = None,
                                     limit: Option[Int] = Some(100)
@@ -94,7 +95,7 @@ abstract class GroupingAggAnalyzer(
           }
         }.toMap
         GroupMetric(
-          entityFrom(groupColumns), name, groupColumns.mkString(","),
+          entityFrom(groupColumns), name, instance,
           Success(metricSimpleValue.asInstanceOf[Map[Map[String, _], Map[String, _]]])
         )
       case None =>
@@ -104,7 +105,7 @@ abstract class GroupingAggAnalyzer(
 
   override def toFailureMetric(exception: Exception): GroupMetric = {
     GroupMetric(
-      entityFrom(groupColumns), name, groupColumns.mkString(","),
+      entityFrom(groupColumns), name, instance,
       Failure(exception)
     )
   }
