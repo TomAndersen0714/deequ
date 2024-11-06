@@ -5,7 +5,7 @@
  * use this file except in compliance with the License. A copy of the License
  * is located at
  *
- *     http://aws.amazon.com/apache2.0/
+ * http://aws.amazon.com/apache2.0/
  *
  * or in the "license" file accompanying this file. This file is distributed on
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
@@ -13,7 +13,6 @@
  * permissions and limitations under the License.
  *
  */
-
 package com.amazon.deequ.analyzers.grouping
 
 import com.amazon.deequ.analyzers.Analyzers.{COUNT_COL, emptyStateException, entityFrom}
@@ -65,28 +64,27 @@ abstract class GroupingAggAnalyzer(
     } ++ super.preconditions
   }
 
-  /** Defines the aggregations to compute on the data */
-  def aggregationFunctions(): Seq[Column] = {
-    expr(s"COUNT(1)").alias(s"$COUNT_COL") :: Nil
+  /** Defines the double metric to compute on the data */
+  def aggregationFunction(): Column = {
+    expr(s"COUNT(1)").alias(s"$COUNT_COL")
   }
 
 
   override def computeStateFrom(data: DataFrame): Option[GroupSummableRowsState] = {
-    Some(GroupingAggAnalyzer.computeStateFrom(data, groupColumns, aggregationFunctions(), where, limit))
+    Some(GroupingAggAnalyzer.computeStateFrom(data, groupColumns, aggregationFunction() :: Nil, where, limit))
   }
 
 
   override def computeMetricFrom(state: Option[GroupSummableRowsState]): GroupMetric = {
-    val aggColumnNames = aggregationFunctions().map(
-      column => aggColumnAliasName(column)
-    )
+    val aggColumnNames = aggColumnAliasName(aggregationFunction()):: Nil
+    val selectColNames = groupColumns ++ aggColumnNames
 
     state match {
       case Some(theState) =>
         // TODO: 性能优化, 先取需要的 DataFrame, 不要整个 Collect
-
         // action the dataframe using collect operation
-        val metricSimpleValue = theState.groupedAggRows.collect().map {
+        val resultDataFrame = theState.groupedAggRows.select(selectColNames.head, selectColNames.tail:_*)
+        val metricSimpleValue = resultDataFrame.collect().map {
           row: Row => {
             // get all formatted expressions of column and corresponding values
             val groupMap = row.getValuesMap[String](groupColumns)
@@ -134,7 +132,7 @@ object GroupingAggAnalyzer {
                       ): GroupSummableRowsState = {
 
     val groupColumnsExpr = groupColumns.map(col)
-    val aggColumnsExpr = aggregations.map{
+    val aggColumnsExpr = aggregations.map {
       aggregation => aggregation.alias(aggColumnAliasName(aggregation))
     }
 

@@ -315,7 +315,7 @@ object AnalysisRunner {
       // TODO: 计算中间公共状态, 同时load之前保存的中间状态
       var groupSummableRowsState = GroupingAggAnalyzer.computeStateFrom(
         data, groupingColumns,
-        groupingAggAnalyzers.flatMap {_.asInstanceOf[GroupingAggAnalyzer].aggregationFunctions()},
+        groupingAggAnalyzers.map {_.asInstanceOf[GroupingAggAnalyzer].aggregationFunction()},
         filterCondition
       )
 

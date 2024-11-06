@@ -30,7 +30,7 @@ case class GroupingEmptySize(
   limit: Option[Int] = None
 ) extends GroupingAggAnalyzer("GroupingEmptySize", column, groupColumns, where, limit) {
 
-  override def aggregationFunctions(): Seq[Column] = {
-    expr(s"SUM(IF($column IS NULL OR trim($column) = '', 1, 0))").alias("GroupingEmptySize") :: Nil
+  override def aggregationFunction(): Column = {
+    expr(s"SUM(IF($column IS NULL OR trim($column) = '', 1, 0))").alias("GroupingEmptySize")
   }
 }
