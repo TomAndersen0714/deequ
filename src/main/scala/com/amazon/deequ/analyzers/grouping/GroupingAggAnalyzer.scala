@@ -26,6 +26,7 @@ import org.apache.spark.sql.catalyst.expressions.Alias
 import org.apache.spark.sql.functions.{col, expr}
 import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.{Column, DataFrame, Row}
+import org.apache.spark.storage.StorageLevel
 
 import scala.util.{Failure, Success}
 
@@ -81,7 +82,6 @@ abstract class GroupingAggAnalyzer(
 
     state match {
       case Some(theState) =>
-        // TODO: 性能优化, 先取需要的 DataFrame, 不要整个 Collect
         // action the dataframe using collect operation
         val resultDataFrame = theState.groupedAggRows.select(selectColNames.head, selectColNames.tail:_*)
         val metricSimpleValue = resultDataFrame.collect().map {
@@ -109,6 +109,8 @@ abstract class GroupingAggAnalyzer(
   }
 
   // todo, toSuccessMetric
+
+
 }
 
 /**
@@ -156,8 +158,17 @@ object GroupingAggAnalyzer {
     }
   }
 
-  def analyzerContextFromState(state: GroupSummableRowsState, analyzers: Seq[GroupingAggAnalyzer])
+  def analyzerContextFromState(
+    state: GroupSummableRowsState,
+    analyzers: Seq[GroupingAggAnalyzer],
+    storageLevelOfGroupedDataForMultiplePasses: StorageLevel = StorageLevel.MEMORY_AND_DISK,
+  )
   : AnalyzerContext = {
+
+    // 批量计算时, 通过缓存避免重复计算
+    if (analyzers.nonEmpty) {
+      state.groupedAggRows.persist(storageLevelOfGroupedDataForMultiplePasses)
+    }
 
     AnalyzerContext(
       analyzers.map {

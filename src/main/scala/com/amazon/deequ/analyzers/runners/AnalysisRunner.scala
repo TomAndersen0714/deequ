@@ -329,7 +329,9 @@ object AnalysisRunner {
         }
 
       // TODO: State 转换为 Metric, 并和 Analyzer 组装成为 AnalyzerContext, 同时和其他的 AnalyzerContext 合并
-      results = GroupingAggAnalyzer.analyzerContextFromState(groupSummableRowsState, groupingAggAnalyzers.map(_.asInstanceOf[GroupingAggAnalyzer])) ++ results
+      results = GroupingAggAnalyzer.analyzerContextFromState(
+        groupSummableRowsState, groupingAggAnalyzers.map(_.asInstanceOf[GroupingAggAnalyzer]), storageLevelOfGroupedDataForMultiplePasses
+      ) ++ results
     }
     // TODO: 处理其他类型的 GroupingAnalyzer, 目前不存在此情况, 后续扩展时再看情况处理
 
