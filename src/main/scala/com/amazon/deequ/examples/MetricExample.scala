@@ -5,7 +5,7 @@
  * use this file except in compliance with the License. A copy of the License
  * is located at
  *
- *     http://aws.amazon.com/apache2.0/
+ * http://aws.amazon.com/apache2.0/
  *
  * or in the "license" file accompanying this file. This file is distributed on
  * an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
@@ -13,7 +13,6 @@
  * permissions and limitations under the License.
  *
  */
-
 package com.amazon.deequ.examples
 
 import com.amazon.deequ.analyzers.runners.AnalysisRunner
@@ -50,7 +49,7 @@ object MetricExample {
         .addAnalyzer(PatternNotMatchRatio("productName", Patterns.CHINESE_NAME))
         .addAnalyzer(PatternNotMatchSize("productName", Patterns.CHINESE_NAME))
         .addAnalyzer(PatternMatchSize("description", Patterns.CHINESE_PHONE))
-        .addAnalyzer(GroupingEmptySize("description", Seq("productName")))
+        .addAnalyzer(GroupingEmptySize("description", Seq("productName", "priority")))
 
       //      val stateStore = InMemoryStateProvider()
 
@@ -63,7 +62,7 @@ object MetricExample {
       println(s"Metrics for the first ${data.count()} records:\n")
       metricsForData.metricMap.foreach {
         case (analyzer, metric)
-        => println(s"\t$analyzer: ${metric.value.get}")
+        => println(s"\t$analyzer: ${metric}")
       }
 
     }

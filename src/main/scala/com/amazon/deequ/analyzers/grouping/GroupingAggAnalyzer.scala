@@ -28,6 +28,7 @@ import org.apache.spark.sql.types.StructType
 import org.apache.spark.sql.{Column, DataFrame, Row}
 import org.apache.spark.storage.StorageLevel
 
+import scala.collection.mutable
 import scala.util.{Failure, Success}
 
 /**
@@ -77,39 +78,57 @@ abstract class GroupingAggAnalyzer(
 
 
   override def computeMetricFrom(state: Option[GroupSummableRowsState]): GroupMetric = {
-    val aggColumnNames = aggColumnAliasName(aggregationFunction()):: Nil
+    val aggColumnNames = aggColumnAliasName(aggregationFunction()) :: Nil
     val selectColNames = groupColumns ++ aggColumnNames
 
     state match {
       case Some(theState) =>
         // action the dataframe using collect operation
-        val resultDataFrame = theState.groupedAggRows.select(selectColNames.head, selectColNames.tail:_*)
-        val metricSimpleValue = resultDataFrame.collect().map {
+        val resultDataFrame = theState.groupedAggRows.select(selectColNames.head, selectColNames.tail: _*)
+        val resultSeqs = resultDataFrame.collect().map {
           row: Row => {
             // get all formatted expressions of column and corresponding values
-            val groupMap = row.getValuesMap[String](groupColumns)
-            val aggMap = row.getValuesMap[String](aggColumnNames)
-            (groupMap, aggMap)
+            row.getValuesMap[String](groupColumns).values.toSeq ++ row.getValuesMap[String](aggColumnNames).values.toSeq
           }
-        }.toMap
-        GroupMetric(
-          entityFrom(groupColumns), name, instance,
-          Success(metricSimpleValue.asInstanceOf[Map[Map[String, _], Map[String, _]]])
-        )
+        }.toSeq
+
+        toSuccessMetric(resultSeqs)
       case None =>
         toFailureMetric(MetricCalculationException.wrapIfNecessary(emptyStateException(this)))
     }
   }
 
   override def toFailureMetric(exception: Exception): GroupMetric = {
-    GroupMetric(
-      entityFrom(groupColumns), name, instance,
-      Failure(exception)
-    )
+    GroupMetric(entityFrom(groupColumns), name, instance, Failure(exception))
   }
 
-  // todo, toSuccessMetric
+  def toSuccessMetric(results: Seq[Seq[String]]): GroupMetric = {
+    val value = mutable.Map.empty[String, Any]
+    results.foreach{
+      result => {
+        addPathToTree(value, result)
+      }
+    }
+    GroupMetric(entityFrom(groupColumns), name, instance, Success(value.toMap))
+  }
 
+
+  private def addPathToTree(root: mutable.Map[String, Any], nodes: Seq[String]): mutable.Map[String, Any] = {
+    // 如果当前路径已到达叶节点, 则直接插入分支节点和叶节点
+    if (nodes.length == 2) {
+      root.update(nodes.head, nodes.tail.head.asInstanceOf[Any])
+    }
+    // 如果当前节点是分支节点, 且是新增分支节点, 则插入分支
+    else if (!root.contains(nodes.head)) {
+      root.update(nodes.head, addPathToTree(mutable.Map.empty, nodes.tail))
+    }
+    // 如果当前节点是分支节点, 且已存在, 则将剩余节点添加到该分支上
+    else {
+      val branch = root(nodes.head)
+      root.update(nodes.head, addPathToTree(branch.asInstanceOf[mutable.Map[String, Any]], nodes.tail))
+    }
+    root
+  }
 
 }
 
